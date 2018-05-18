@@ -1,0 +1,77 @@
+import urllib2
+from HTMLParser import HTMLParser
+
+class profileParser(HTMLParser):
+    def __init__(self):
+        HTMLParser.__init__(self)
+        #Stores information of current element. The format is [tag_name,element_data]
+        self.Elem = ["",""]
+        #Stores previous element, which self.Elem will be transferred to after scraping the contributions
+        self.lastElem = ["",""]
+        self.current_lobbyist = ""
+        self.enough = False
+        self.database = {"lobbyist_name": [], "lobbyist_company": [], "payee_name": [], "payee_company": [], "amount": [], "date": []}
+    
+    def handle_starttag(self, tag, attrs):
+        #If the lobbyist has a name and the parser has reached the contributions div, create lists
+        #in the database for each piece of data for this lobbyist, as there may be multiple contributions
+        if (tag == "div" and attrs[0] == ("id","contributions") and self.current_lobbyist != ""):
+            self.database["payee_name"].append([])
+            self.database["payee_company"].append([])
+            self.database["amount"].append([])
+            self.database["date"].append([])
+            
+        #If the parser reaches the last div on the page, prepare for the next lobbyist by clearing the current_lobbyist field
+        elif(tag == "div" and attrs[0] == ("id","signature")):
+             self.current_lobbyist = ""
+            
+        self.Elem[0] = tag
+        
+        return
+
+    def handle_data(self, data):
+        #Evade parser trash by ignoring any elements that only contain a newline
+        if (data == "\n"):
+            return
+
+        self.Elem[1] = data
+
+        #If the profile has a lobbyist name field, append it to their database "row" and store it for the parsing process
+        if (self.lastElem[1] == "Lobbyist Name:" and self.Elem[0] == "p"):
+            self.database["lobbyist_name"].append(data)
+            self.current_lobbyist = data
+
+        #continue parsing and storing contribution data in the database if there is a lobbyist name
+        if (self.current_lobbyist != ""):
+            if (self.lastElem[1] == "Employer Name:" and self.Elem[0] == "p"):
+                self.database["lobbyist_company"].append(data)
+            elif (self.lastElem[1] == "Payee:" and self.Elem[0] == "p" and self.enough == True):
+                self.database["payee_company"][-1].append(data)
+            elif (self.lastElem[1] == "Honoree:" and self.Elem[0] == "p" and self.enough == True):
+                self.database["payee_name"][-1].append(data)
+                self.enough = False
+            elif (self.lastElem[1] == "Amount:" and self.Elem[0] == "p"):
+                amount = int(float(data.strip("\n").strip("\t").strip("$").replace(",",'')))
+                if (amount >= 100000):
+                    self.database["amount"][-1].append(amount)
+                    self.enough = True
+            elif (self.lastElem[1] == "Date:" and self.Elem[0] == "p" and self.enough == True):
+                self.database["date"][-1].append(data)
+            
+        self.lastElem = list(self.Elem)
+        
+        return
+
+parser = profileParser()
+
+#open \n separated list of URL paths/parameters for each profile in the lobbyist database web interface that has contributed 100k <=
+with open("over100000.txt", 'r') as datalist:
+    donors = datalist.readlines()
+    for donor in donors:
+        url = "http://soprweb.senate.gov/"+donor.strip("\n")
+        request = urllib2.Request(url)
+        response = urllib2.urlopen(request)
+        profile = response.read().strip("\n")
+        parser.feed(profile)
+
+print(parser.database)
